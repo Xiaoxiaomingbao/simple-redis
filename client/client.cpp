@@ -5,10 +5,12 @@
 #include <arpa/inet.h>
 
 int main() {
+    // Create a socket using IPv4 (AF_INET) and TCP (SOCK_STREAM)
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in addr {};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(6379);
+    addr.sin_port = htons(6379); // host-to-network short: converts a 16-bit integer to network byte order (big-endian)
+    // converts IP address from text to binary form
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
     connect(sock, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
 

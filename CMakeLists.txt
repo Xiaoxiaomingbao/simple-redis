@@ -10,4 +10,5 @@ add_subdirectory(client)
 add_executable(server
         src/main.cpp
         src/server.cpp
+        src/object.cpp
 )

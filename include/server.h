@@ -1,4 +1,5 @@
 #pragma once
+#include <object.h>
 #include <unordered_map>
 #include <string>
 #include <sys/epoll.h>
@@ -12,7 +13,7 @@ private:
     int listen_fd;
     int epoll_fd;
     std::unordered_map<int, std::string> client_buffers;
-    std::unordered_map<std::string, std::string> kv_store;
+    std::unordered_map<std::string, RedisObject> kv_store;
 
     void accept_connection() const;
     void handle_client(int client_fd);
