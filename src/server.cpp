@@ -96,15 +96,73 @@ void RedisServer::parse_and_execute(const int client_fd, const std::string& comm
     } else if (command_type == "SET") {
         if (tokens.size() == 3) {
             if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
-                // Key does not exist
                 auto ro = RedisObject(RedisObject::Type::STRING);
                 auto res = ro.set(tokens[2]);
                 kv_store.emplace(tokens[1], std::move(ro));
                 send_response(client_fd, res);
             } else {
-                // Key exists
                 auto res = it->second.set(tokens[2]);
                 send_response(client_fd, res);
+            }
+        } else {
+            send_response(client_fd, "Incorrect argument number");
+        }
+    } else if (command_type == "SETNX") {
+        if (tokens.size() == 3) {
+            if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
+                auto ro = RedisObject(RedisObject::Type::STRING);
+                auto res = ro.set(tokens[2]);
+                kv_store.emplace(tokens[1], std::move(ro));
+                send_response(client_fd, res);
+            } else {
+                send_response(client_fd, "(nil)");
+            }
+        } else {
+            send_response(client_fd, "Incorrect argument number");
+        }
+    } else if (command_type == "INCR") {
+        if (tokens.size() == 2) {
+            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                auto res = it->second.incr();
+                send_response(client_fd, res);
+            } else {
+                send_response(client_fd, "(nil)");
+            }
+        } else {
+            send_response(client_fd, "Incorrect argument number");
+        }
+    } else if (command_type == "INCRBY") {
+        if (tokens.size() == 3) {
+            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                try {
+                    int stride = std::stoi(tokens[2]);
+                    auto res = it->second.incr_by(stride);
+                    send_response(client_fd, res);
+                } catch (const std::invalid_argument& e) {
+                    send_response(client_fd, "Stride should be an integer");
+                } catch (const std::out_of_range& e) {
+                    send_response(client_fd, "Stride should be an integer");
+                }
+            } else {
+                send_response(client_fd, "(nil)");
+            }
+        } else {
+            send_response(client_fd, "Incorrect argument number");
+        }
+    } else if (command_type == "INCRBYFLOAT") {
+        if (tokens.size() == 3) {
+            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                try {
+                    double stride = std::stod(tokens[2]);
+                    auto res = it->second.incr_by_float(stride);
+                    send_response(client_fd, res);
+                } catch (const std::invalid_argument& e) {
+                    send_response(client_fd, "Stride should be a float number");
+                } catch (const std::out_of_range& e) {
+                    send_response(client_fd, "Stride should be a float number");
+                }
+            } else {
+                send_response(client_fd, "(nil)");
             }
         } else {
             send_response(client_fd, "Incorrect argument number");
