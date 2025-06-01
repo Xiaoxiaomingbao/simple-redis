@@ -269,6 +269,27 @@ void RedisServer::parse_and_execute(const int client_fd, const std::string& comm
             } else {
                 send_response(client_fd, "Incorrect argument number");
             }
+        } else if (command_type == "EXISTS") {
+            if (tokens.size() == 2) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    send_response(client_fd, "true");
+                } else {
+                    send_response(client_fd, "false");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "DEL") {
+            if (tokens.size() == 2) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    kv_store.erase(tokens[1]);
+                    send_response(client_fd, "OK");
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
         } else {
             send_response(client_fd, "Unknown command " + command_type);
         }

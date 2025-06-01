@@ -53,7 +53,7 @@ std::string RedisString::std_string() const {
         case Encoding::DOUBLE:
             return std::to_string(std::get<double>(this->str));
         case Encoding::STD_STRING:
-            return std::get<std::string>(this->str);
+            return "\"" + std::get<std::string>(this->str) + "\"";
         default:
             return "(nil)";
     }
@@ -221,7 +221,9 @@ std::string RedisObject::l_range(int start, int end) const {
 
     std::string result;
     for (size_t i = start; i <= end; ++i) {
-        result += list[i].std_string() + "\n";
+        std::string number = "(" + std::to_string(i - start + 1) + ") ";
+        result += number + list[i].std_string();
+        if (i < end) result += "\n";
     }
     return result.empty() ? "(empty list)" : result;
 }
