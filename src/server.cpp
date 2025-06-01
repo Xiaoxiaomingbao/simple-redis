@@ -84,28 +84,32 @@ void RedisServer::parse_and_execute(const int client_fd, const std::string& comm
     for (char& i : tokens[0]) {
         i = toupper(i);
     }
-    switch (const std::string command_type = tokens[0]) {
-        case "GET":
-            if (tokens.size() == 2) {
-                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end())
-                    send_response(client_fd, it->second.get());
-                else
-                    send_response(client_fd, "(nil)");
-            } else {
-                send_response(client_fd, "Incorrect argument number");
-            }
-            break;
-        case "SET":
-            if (tokens.size() == 3) {
+    if (const std::string command_type = tokens[0]; command_type == "GET") {
+        if (tokens.size() == 2) {
+            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end())
+                send_response(client_fd, it->second.get());
+            else
+                send_response(client_fd, "(nil)");
+        } else {
+            send_response(client_fd, "Incorrect argument number");
+        }
+    } else if (command_type == "SET") {
+        if (tokens.size() == 3) {
+            if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
+                // Key does not exist
                 auto ro = RedisObject(RedisObject::Type::STRING);
                 auto res = ro.set(tokens[2]);
-                kv_store[tokens[1]] = ro;
+                kv_store.emplace(tokens[1], std::move(ro));
                 send_response(client_fd, res);
             } else {
-                send_response(client_fd, "Incorrect argument number");
+                // Key exists
+                auto res = it->second.set(tokens[2]);
+                send_response(client_fd, res);
             }
-            break;
-        default:
-            send_response(client_fd, "Unknown command " + command_type);;
+        } else {
+            send_response(client_fd, "Incorrect argument number");
+        }
+    } else {
+        send_response(client_fd, "Unknown command " + command_type);
     }
 }

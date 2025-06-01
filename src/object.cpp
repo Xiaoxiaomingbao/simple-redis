@@ -87,8 +87,7 @@ RedisObject::RedisObject(const Type type) {
         case Type::SET:
             this->type_ = Type::SET;
             this->encoding_ = Encoding::STD_UNORDERED_SET;
-            std::unordered_set<RedisString, RedisStringHasher, RedisStringEqual> set{};
-            this->value = set;
+            this->value = std::unordered_set<RedisString, RedisStringHasher, RedisStringEqual>{};
         case Type::ZSET:
             this->type_ = Type::ZSET;
             this->encoding_ = Encoding::STD_MAP;
@@ -129,15 +128,17 @@ std::string RedisObject::incr() {
 }
 
 std::string RedisObject::incr_by(const int stride) {
+    int new_int;
+    double new_double;
     switch (auto& rs = std::get<RedisString>(this->value); rs.encoding()) {
         case RedisString::Encoding::INT:
-            const int new_int = std::get<int>(this->value) + stride;
+            new_int = rs.get_int() + stride;
             rs.update_content(new_int);
             return std::to_string(new_int);
         case RedisString::Encoding::DOUBLE:
-            const double new_double = std::get<double>(this->value) + stride;
+            new_double = rs.get_double() + stride;
             rs.update_content(new_double);
-            return std::to_string(rs.get_double());
+            return std::to_string(new_double);
         case RedisString::Encoding::STD_STRING:
             return "String encoding not supported for incrementation";;
         default:
@@ -146,13 +147,14 @@ std::string RedisObject::incr_by(const int stride) {
 }
 
 std::string RedisObject::incr_by_float(const double stride) {
+    double new_double;
     switch (auto& rs = std::get<RedisString>(this->value); rs.encoding()) {
         case RedisString::Encoding::INT:
             rs.convert_num_type(); // then matched to next case
         case RedisString::Encoding::DOUBLE:
-            const double new_double = std::get<double>(this->value) + stride;
+            new_double = rs.get_double() + stride;
             rs.update_content(new_double);
-            return std::to_string(rs.get_double());
+            return std::to_string(new_double);
         case RedisString::Encoding::STD_STRING:
             return "String encoding not supported for incrementation";;
         default:
