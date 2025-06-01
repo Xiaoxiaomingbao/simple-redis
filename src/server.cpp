@@ -84,90 +84,193 @@ void RedisServer::parse_and_execute(const int client_fd, const std::string& comm
     for (char& i : tokens[0]) {
         i = toupper(i);
     }
-    if (const std::string command_type = tokens[0]; command_type == "GET") {
-        if (tokens.size() == 2) {
-            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end())
-                send_response(client_fd, it->second.get());
-            else
-                send_response(client_fd, "(nil)");
-        } else {
-            send_response(client_fd, "Incorrect argument number");
-        }
-    } else if (command_type == "SET") {
-        if (tokens.size() == 3) {
-            if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
-                auto ro = RedisObject(RedisObject::Type::STRING);
-                auto res = ro.set(tokens[2]);
-                kv_store.emplace(tokens[1], std::move(ro));
-                send_response(client_fd, res);
-            } else {
-                auto res = it->second.set(tokens[2]);
-                send_response(client_fd, res);
-            }
-        } else {
-            send_response(client_fd, "Incorrect argument number");
-        }
-    } else if (command_type == "SETNX") {
-        if (tokens.size() == 3) {
-            if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
-                auto ro = RedisObject(RedisObject::Type::STRING);
-                auto res = ro.set(tokens[2]);
-                kv_store.emplace(tokens[1], std::move(ro));
-                send_response(client_fd, res);
-            } else {
-                send_response(client_fd, "(nil)");
-            }
-        } else {
-            send_response(client_fd, "Incorrect argument number");
-        }
-    } else if (command_type == "INCR") {
-        if (tokens.size() == 2) {
-            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
-                auto res = it->second.incr();
-                send_response(client_fd, res);
-            } else {
-                send_response(client_fd, "(nil)");
-            }
-        } else {
-            send_response(client_fd, "Incorrect argument number");
-        }
-    } else if (command_type == "INCRBY") {
-        if (tokens.size() == 3) {
-            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
-                try {
-                    int stride = std::stoi(tokens[2]);
-                    auto res = it->second.incr_by(stride);
-                    send_response(client_fd, res);
-                } catch (const std::invalid_argument& e) {
-                    send_response(client_fd, "Stride should be an integer");
-                } catch (const std::out_of_range& e) {
-                    send_response(client_fd, "Stride should be an integer");
-                }
-            } else {
-                send_response(client_fd, "(nil)");
-            }
-        } else {
-            send_response(client_fd, "Incorrect argument number");
-        }
-    } else if (command_type == "INCRBYFLOAT") {
-        if (tokens.size() == 3) {
-            if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
-                try {
-                    double stride = std::stod(tokens[2]);
-                    auto res = it->second.incr_by_float(stride);
-                    send_response(client_fd, res);
-                } catch (const std::invalid_argument& e) {
-                    send_response(client_fd, "Stride should be a float number");
-                } catch (const std::out_of_range& e) {
-                    send_response(client_fd, "Stride should be a float number");
-                }
-            } else {
-                send_response(client_fd, "(nil)");
-            }
-        } else {
-            send_response(client_fd, "Incorrect argument number");
-        }
-    } else {
+    const std::string command_type = tokens[0];
+    if (command_type.length() < 2) {
         send_response(client_fd, "Unknown command " + command_type);
+    }
+    if (command_type[0] == 'L') {
+        // List
+        if (command_type == "LPUSH") {
+            if (tokens.size() == 3) {
+                if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
+                    auto ro = RedisObject(RedisObject::Type::LIST);
+                    auto res = ro.l_push(tokens[2]);
+                    kv_store.emplace(tokens[1], std::move(ro));
+                    send_response(client_fd, res);
+                } else {
+                    auto res = it->second.l_push(tokens[2]);
+                    send_response(client_fd, res);
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "LPOP") {
+            if (tokens.size() == 2) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    auto res = it->second.l_pop();
+                    send_response(client_fd, res);
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "LRANGE") {
+            if (tokens.size() == 4) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    try {
+                        int idx1 = std::stoi(tokens[2]);
+                        int idx2 = std::stoi(tokens[3]);
+                        auto res = it->second.l_range(idx1, idx2);
+                        send_response(client_fd, res);
+                    } catch (const std::invalid_argument &e) {
+                        send_response(client_fd, "Index should be an integer");
+                    } catch (const std::out_of_range &e) {
+                        send_response(client_fd, "Index should be an integer");
+                    }
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "LLEN") {
+            if (tokens.size() == 2) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    auto res = it->second.l_len();
+                    send_response(client_fd, res);
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else {
+            send_response(client_fd, "Unknown command " + command_type);
+        }
+    } else if (command_type[0] == 'R') {
+        // List
+        if (command_type == "RPUSH") {
+            if (tokens.size() == 3) {
+                if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
+                    auto ro = RedisObject(RedisObject::Type::LIST);
+                    auto res = ro.r_push(tokens[2]);
+                    kv_store.emplace(tokens[1], std::move(ro));
+                    send_response(client_fd, res);
+                } else {
+                    auto res = it->second.r_push(tokens[2]);
+                    send_response(client_fd, res);
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "RPOP") {
+            if (tokens.size() == 2) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    auto res = it->second.r_pop();
+                    send_response(client_fd, res);
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else {
+            send_response(client_fd, "Unknown command " + command_type);
+        }
+    } else if (command_type[0] == 'H') {
+        // Hash
+    } else if (command_type[0] == 'S' && command_type[1] != 'E') {
+        // Set
+    } else if (command_type[0] == 'Z') {
+        // ZSet
+    } else {
+        // String
+        if (command_type == "GET") {
+            if (tokens.size() == 2) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end())
+                    send_response(client_fd, it->second.get());
+                else
+                    send_response(client_fd, "(nil)");
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "SET") {
+            if (tokens.size() == 3) {
+                if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
+                    auto ro = RedisObject(RedisObject::Type::STRING);
+                    auto res = ro.set(tokens[2]);
+                    kv_store.emplace(tokens[1], std::move(ro));
+                    send_response(client_fd, res);
+                } else {
+                    auto res = it->second.set(tokens[2]);
+                    send_response(client_fd, res);
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "SETNX") {
+            if (tokens.size() == 3) {
+                if (const auto it = kv_store.find(tokens[1]); it == kv_store.end()) {
+                    auto ro = RedisObject(RedisObject::Type::STRING);
+                    auto res = ro.set(tokens[2]);
+                    kv_store.emplace(tokens[1], std::move(ro));
+                    send_response(client_fd, res);
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "INCR") {
+            if (tokens.size() == 2) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    auto res = it->second.incr();
+                    send_response(client_fd, res);
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "INCRBY") {
+            if (tokens.size() == 3) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    try {
+                        int stride = std::stoi(tokens[2]);
+                        auto res = it->second.incr_by(stride);
+                        send_response(client_fd, res);
+                    } catch (const std::invalid_argument &e) {
+                        send_response(client_fd, "Stride should be an integer");
+                    } catch (const std::out_of_range &e) {
+                        send_response(client_fd, "Stride should be an integer");
+                    }
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else if (command_type == "INCRBYFLOAT") {
+            if (tokens.size() == 3) {
+                if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
+                    try {
+                        double stride = std::stod(tokens[2]);
+                        auto res = it->second.incr_by_float(stride);
+                        send_response(client_fd, res);
+                    } catch (const std::invalid_argument &e) {
+                        send_response(client_fd, "Stride should be a float number");
+                    } catch (const std::out_of_range &e) {
+                        send_response(client_fd, "Stride should be a float number");
+                    }
+                } else {
+                    send_response(client_fd, "(nil)");
+                }
+            } else {
+                send_response(client_fd, "Incorrect argument number");
+            }
+        } else {
+            send_response(client_fd, "Unknown command " + command_type);
+        }
     }
 }

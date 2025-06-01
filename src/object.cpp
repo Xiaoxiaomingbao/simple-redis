@@ -46,6 +46,19 @@ inline std::string RedisString::get_string() const {
     return std::get<std::string>(this->str);
 }
 
+std::string RedisString::std_string() const {
+    switch (this->encoding_) {
+        case Encoding::INT:
+            return std::to_string(std::get<int>(this->str));
+        case Encoding::DOUBLE:
+            return std::to_string(std::get<double>(this->str));
+        case Encoding::STD_STRING:
+            return std::get<std::string>(this->str);
+        default:
+            return "(nil)";
+    }
+}
+
 inline void RedisString::update_content(const std::string& new_value) {
     this->str = new_value;
 }
@@ -71,22 +84,27 @@ RedisObject::RedisObject(const Type type) {
             this->type_ = Type::STRING;
             this->encoding_ = Encoding::REDIS_STRING;
             this->value = RedisString();
+            break;
         case Type::LIST:
             this->type_ = Type::LIST;
             this->encoding_ = Encoding::STD_VECTOR;
             this->value = std::vector<RedisString>();
+            break;
         case Type::HASH:
             this->type_ = Type::HASH;
             this->encoding_ = Encoding::STD_UNORDERED_MAP;
             this->value = std::unordered_map<std::string, RedisString>();
+            break;
         case Type::SET:
             this->type_ = Type::SET;
             this->encoding_ = Encoding::STD_UNORDERED_SET;
             this->value = std::unordered_set<RedisString, RedisStringHasher, RedisStringEqual>{};
+            break;
         case Type::ZSET:
             this->type_ = Type::ZSET;
             this->encoding_ = Encoding::STD_MAP;
             this->value = std::map<double, RedisString>();
+            break;
         default: ;
     }
 }
@@ -101,28 +119,24 @@ inline RedisObject::Encoding RedisObject::encoding() const {
 
 // String
 std::string RedisObject::get() const {
-    switch (const auto rs = std::get<RedisString>(this->value); rs.encoding()) {
-        case RedisString::Encoding::INT:
-            return std::to_string(rs.get_int());
-        case RedisString::Encoding::DOUBLE:
-            return std::to_string(rs.get_double());
-        case RedisString::Encoding::STD_STRING:
-            return rs.get_string();
-        default:
-            return "(nil)";
-    }
+    if (this->type_ != Type::STRING) return "Redis object type error";
+    const auto rs = std::get<RedisString>(this->value);
+    return rs.std_string();
 }
 
 std::string RedisObject::set(const std::string& value) {
+    if (this->type_ != Type::STRING) return "Redis object type error";
     this->value = RedisString(value);
     return "OK";
 }
 
 std::string RedisObject::incr() {
+    if (this->type_ != Type::STRING) return "Redis object type error";
     return incr_by(1);
 }
 
 std::string RedisObject::incr_by(const int stride) {
+    if (this->type_ != Type::STRING) return "Redis object type error";
     int new_int;
     double new_double;
     switch (auto& rs = std::get<RedisString>(this->value); rs.encoding()) {
@@ -135,13 +149,14 @@ std::string RedisObject::incr_by(const int stride) {
             rs.update_content(new_double);
             return std::to_string(new_double);
         case RedisString::Encoding::STD_STRING:
-            return "String encoding not supported for incrementation";;
+            return "String encoding not supported for incrementation";
         default:
             return "Unexpected error";
     }
 }
 
 std::string RedisObject::incr_by_float(const double stride) {
+    if (this->type_ != Type::STRING) return "Redis object type error";
     double new_double;
     switch (auto& rs = std::get<RedisString>(this->value); rs.encoding()) {
         case RedisString::Encoding::INT:
@@ -151,9 +166,70 @@ std::string RedisObject::incr_by_float(const double stride) {
             rs.update_content(new_double);
             return std::to_string(new_double);
         case RedisString::Encoding::STD_STRING:
-            return "String encoding not supported for incrementation";;
+            return "String encoding not supported for incrementation";
         default:
             return "Unexpected error";
     }
 }
+
+// List
+std::string RedisObject::l_push(const std::string& value) {
+    if (this->type_ != Type::LIST) return "Redis object type error";
+    auto& list = std::get<std::vector<RedisString>>(this->value);
+    list.insert(list.begin(), RedisString(value));
+    return "OK";
+}
+
+std::string RedisObject::l_pop() {
+    if (this->type_ != Type::LIST) return "Redis object type error";
+    auto& list = std::get<std::vector<RedisString>>(this->value);
+    if (list.empty()) return "(nil)";
+    const RedisString val = list.front();
+    list.erase(list.begin());
+    return val.std_string();
+}
+
+std::string RedisObject::r_push(const std::string& value) {
+    if (this->type_ != Type::LIST) return "Redis object type error";
+    auto& list = std::get<std::vector<RedisString>>(this->value);
+    list.emplace_back(value);
+    return "OK";
+}
+
+std::string RedisObject::r_pop() {
+    if (this->type_ != Type::LIST) return "Redis object type error";
+    auto& list = std::get<std::vector<RedisString>>(this->value);
+    if (list.empty()) return "(nil)";
+    const RedisString val = list.back();
+    list.pop_back();
+    return val.std_string();
+}
+
+std::string RedisObject::l_range(int start, int end) const {
+    if (this->type_ != Type::LIST) return "Redis object type error";
+    const auto& list = std::get<std::vector<RedisString>>(this->value);
+    const int size = list.size();
+
+    // minus index
+    if (start < 0) start += size;
+    if (end < 0) end += size;
+
+    // calculate border
+    start = std::max(0, start);
+    end = std::min(size - 1, end);
+    if (start > end) return "(empty list)";
+
+    std::string result;
+    for (size_t i = start; i <= end; ++i) {
+        result += list[i].std_string() + "\n";
+    }
+    return result.empty() ? "(empty list)" : result;
+}
+
+std::string RedisObject::l_len() const {
+    if (this->type_ != Type::LIST) return "Redis object type error";
+    const auto& list = std::get<std::vector<RedisString>>(this->value);
+    return std::to_string(list.size());
+}
+
 

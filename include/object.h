@@ -25,6 +25,8 @@ public:
 
     double get_double() const;
 
+    std::string std_string() const;
+
     void update_content(const std::string& new_value); // Type not changed
 
     void update_content(int new_value); // Type not changed
@@ -93,6 +95,14 @@ public:
     std::string incr();
     std::string incr_by(int stride);
     std::string incr_by_float(double stride);
+
+    // List
+    std::string l_push(const std::string& value);
+    std::string l_pop();
+    std::string r_push(const std::string& value);
+    std::string r_pop();
+    std::string l_range(int start, int end) const;
+    std::string l_len() const;
 
 private:
     std::variant<RedisString, std::vector<RedisString>,
