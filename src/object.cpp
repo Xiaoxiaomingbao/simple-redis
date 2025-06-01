@@ -1,28 +1,23 @@
 #include "object.h"
 
 #include <stdexcept>
+#include <charconv>
 
 RedisString::RedisString(const std::string& str) {
-    try {
-        int int_value = std::stoi(str);
-        this->str = int_value;
+    int int_val;
+    auto int_result = std::from_chars(str.data(), str.data() + str.size(), int_val);
+    if (int_result.ec == std::errc() && int_result.ptr == str.data() + str.size()) {
+        this->str = int_val;
         this->encoding_ = Encoding::INT;
         return;
-    } catch (const std::invalid_argument& e) {
-        ;
-    } catch (const std::out_of_range& e) {
-        ;
     }
 
-    try {
-        double double_value = std::stod(str);
-        this->str = double_value;
+    double double_val;
+    auto double_result = std::from_chars(str.data(), str.data() + str.size(), double_val);
+    if (double_result.ec == std::errc() && double_result.ptr == str.data() + str.size()) {
+        this->str = double_val;
         this->encoding_ = Encoding::DOUBLE;
         return;
-    } catch (const std::invalid_argument& e) {
-        ;
-    } catch (const std::out_of_range& e) {
-        ;
     }
 
     this->str = str;
