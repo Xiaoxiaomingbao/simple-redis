@@ -1,31 +1,16 @@
 #include "object.h"
 
+#include <iostream>
 #include <stdexcept>
-#include <charconv>
 
 RedisString::RedisString(const std::string& str) {
-    int int_val;
-    auto int_result = std::from_chars(str.data(), str.data() + str.size(), int_val);
-    if (int_result.ec == std::errc() && int_result.ptr == str.data() + str.size()) {
-        this->str = int_val;
-        this->encoding_ = Encoding::INT;
-        return;
-    }
-
-    double double_val;
-    auto double_result = std::from_chars(str.data(), str.data() + str.size(), double_val);
-    if (double_result.ec == std::errc() && double_result.ptr == str.data() + str.size()) {
-        this->str = double_val;
-        this->encoding_ = Encoding::DOUBLE;
-        return;
-    }
-
     this->str = str;
-    this->encoding_ = Encoding::STD_STRING;
+    parse_str(); // num and encoding_ will be set here
 }
 
 RedisString::RedisString() {
-    this->str = nullptr;
+    this->str = "";
+    this->num = nullptr;
     this->encoding_ = Encoding::NONE;
 }
 
@@ -34,48 +19,101 @@ inline RedisString::Encoding RedisString::encoding() const {
     return this->encoding_;
 }
 
-inline int RedisString::get_int() const {
-    return std::get<int>(this->str);
-}
-
-inline double RedisString::get_double() const {
-    return std::get<double>(this->str);
-}
-
-inline std::string RedisString::get_string() const {
-    return std::get<std::string>(this->str);
-}
-
 std::string RedisString::std_string() const {
     switch (this->encoding_) {
-        case Encoding::INT:
-            return std::to_string(std::get<int>(this->str));
-        case Encoding::DOUBLE:
-            return std::to_string(std::get<double>(this->str));
-        case Encoding::STD_STRING:
-            return "\"" + std::get<std::string>(this->str) + "\"";
+        case Encoding::STRING_INT:
+        case Encoding::STRING_DOUBLE:
+            return str;
+        case Encoding::ONLY_STRING:
+            return "\"" + str + "\"";
         default:
             return "(nil)";
     }
 }
 
-inline void RedisString::update_content(const std::string& new_value) {
-    this->str = new_value;
+void RedisString::update_num(const int delta) {
+    int val = std::get<int>(this->num);
+    val += delta;
+    num = val;
+    update_str();
 }
 
-inline void RedisString::update_content(int new_value) {
-    this->str = new_value;
+void RedisString::update_num(const double delta) {
+    double val;
+    switch (this->encoding_) {
+        case Encoding::STRING_INT:
+            val = std::get<int>(this->num);
+            break;
+        case Encoding::STRING_DOUBLE:
+            val = std::get<double>(this->num);
+            break;
+        default:
+            return;
+    }
+    val += delta;
+    if (int tried_val = static_cast<int>(val); tried_val == val) {
+        num = tried_val;
+        encoding_ = Encoding::STRING_INT;
+    } else {
+        num = val;
+        encoding_ = Encoding::STRING_DOUBLE;
+    }
+    update_str();
 }
 
-inline void RedisString::update_content(double new_value) {
-    this->str = new_value;
+void RedisString::parse_str() {
+    if (str.empty()) {
+        num = nullptr;
+        encoding_ = Encoding::NONE;
+        return;
+    }
+
+    bool is_strict_integer = true;
+
+    // Check if a string is a pure integer (no leading sign, no leading zero unless it's just "0")
+    if (str != "0" && str[0] == '0') is_strict_integer = false;
+    for (const char ch : str) {
+        if (!std::isdigit(ch)) is_strict_integer = false;
+    }
+
+    if (is_strict_integer) {
+        // try to parse str as int
+        num = std::stoi(str);
+        encoding_ = Encoding::STRING_INT;
+        return;
+    }
+
+    // try to parse str as double
+    size_t pos;
+    try {
+        // leading sign, leading zeros, scientific notation are allowed
+        double val = std::stod(str, &pos);
+        if (pos == str.size()) {
+            // trailing junk is not allowed
+            num = val;
+            encoding_ = Encoding::STRING_DOUBLE;
+            return;
+        }
+    } catch (...) {}
+
+    num = nullptr;
+    encoding_ = Encoding::ONLY_STRING;
 }
 
-void RedisString::convert_num_type() {
-    const int int_value = std::get<int>(this->str);
-    auto double_value = static_cast<double>(int_value);
-    this->str = double_value;
-    this->encoding_ = Encoding::DOUBLE;
+void RedisString::update_str() {
+    int int_val;
+    double double_val;
+    switch (this->encoding_) {
+        case Encoding::STRING_INT:
+            int_val = std::get<int>(this->num);
+            str = std::to_string(int_val);
+            break;
+        case Encoding::STRING_DOUBLE:
+            double_val = std::get<double>(this->num);
+            str = std::to_string(double_val);
+            break;
+        default: ;
+    }
 }
 
 RedisObject::RedisObject(const Type type) {
@@ -88,7 +126,7 @@ RedisObject::RedisObject(const Type type) {
         case Type::LIST:
             this->type_ = Type::LIST;
             this->encoding_ = Encoding::STD_VECTOR;
-            this->value = std::vector<RedisString>();
+            this->value = std::vector<std::string>();
             break;
         case Type::HASH:
             this->type_ = Type::HASH;
@@ -98,12 +136,12 @@ RedisObject::RedisObject(const Type type) {
         case Type::SET:
             this->type_ = Type::SET;
             this->encoding_ = Encoding::STD_UNORDERED_SET;
-            this->value = std::unordered_set<RedisString, RedisStringHasher, RedisStringEqual>{};
+            this->value = std::unordered_set<std::string>{};
             break;
         case Type::ZSET:
             this->type_ = Type::ZSET;
-            this->encoding_ = Encoding::STD_MAP;
-            this->value = std::map<double, RedisString>();
+            this->encoding_ = Encoding::STD_SET_STD_UNORDERED_MAP;
+            this->value = ZSet{};
             break;
         default: ;
     }
@@ -131,83 +169,67 @@ std::string RedisObject::set(const std::string& value) {
 }
 
 std::string RedisObject::incr() {
-    if (this->type_ != Type::STRING) return "Redis object type error";
     return incr_by(1);
 }
 
-std::string RedisObject::incr_by(const int stride) {
+std::string RedisObject::incr_by(const int increment) {
     if (this->type_ != Type::STRING) return "Redis object type error";
-    int new_int;
-    double new_double;
-    switch (auto& rs = std::get<RedisString>(this->value); rs.encoding()) {
-        case RedisString::Encoding::INT:
-            new_int = rs.get_int() + stride;
-            rs.update_content(new_int);
-            return std::to_string(new_int);
-        case RedisString::Encoding::DOUBLE:
-            new_double = rs.get_double() + stride;
-            rs.update_content(new_double);
-            return std::to_string(new_double);
-        case RedisString::Encoding::STD_STRING:
-            return "String encoding not supported for incrementation";
-        default:
-            return "Unexpected error";
+    // encoding_ must be STRING_INT
+    if (auto& rs = std::get<RedisString>(this->value); rs.encoding() == RedisString::Encoding::STRING_INT) {
+        rs.update_num(increment);
+        return rs.std_string();
     }
+    return "Redis string can not be recognized as an integer";
 }
 
-std::string RedisObject::incr_by_float(const double stride) {
+std::string RedisObject::incr_by_float(const double increment) {
     if (this->type_ != Type::STRING) return "Redis object type error";
-    double new_double;
     switch (auto& rs = std::get<RedisString>(this->value); rs.encoding()) {
-        case RedisString::Encoding::INT:
-            rs.convert_num_type(); // then matched to next case
-        case RedisString::Encoding::DOUBLE:
-            new_double = rs.get_double() + stride;
-            rs.update_content(new_double);
-            return std::to_string(new_double);
-        case RedisString::Encoding::STD_STRING:
-            return "String encoding not supported for incrementation";
+        case RedisString::Encoding::STRING_INT:
+        case RedisString::Encoding::STRING_DOUBLE:
+            rs.update_num(increment);
+            return rs.std_string();
         default:
-            return "Unexpected error";
+            return "Redis string can not be recognized as a number";
     }
 }
 
 // List
 std::string RedisObject::l_push(const std::string& value) {
     if (this->type_ != Type::LIST) return "Redis object type error";
-    auto& list = std::get<std::vector<RedisString>>(this->value);
-    list.insert(list.begin(), RedisString(value));
+    auto& list = std::get<std::vector<std::string>>(this->value);
+    list.insert(list.begin(), value);
     return "OK";
 }
 
 std::string RedisObject::l_pop() {
     if (this->type_ != Type::LIST) return "Redis object type error";
-    auto& list = std::get<std::vector<RedisString>>(this->value);
+    auto& list = std::get<std::vector<std::string>>(this->value);
     if (list.empty()) return "(nil)";
-    const RedisString val = list.front();
+    auto val = list.front();
     list.erase(list.begin());
-    return val.std_string();
+    return val;
 }
 
 std::string RedisObject::r_push(const std::string& value) {
     if (this->type_ != Type::LIST) return "Redis object type error";
-    auto& list = std::get<std::vector<RedisString>>(this->value);
+    auto& list = std::get<std::vector<std::string>>(this->value);
     list.emplace_back(value);
     return "OK";
 }
 
 std::string RedisObject::r_pop() {
     if (this->type_ != Type::LIST) return "Redis object type error";
-    auto& list = std::get<std::vector<RedisString>>(this->value);
+    auto& list = std::get<std::vector<std::string>>(this->value);
     if (list.empty()) return "(nil)";
-    const RedisString val = list.back();
+    auto val = list.back();
     list.pop_back();
-    return val.std_string();
+    return val;
 }
 
 std::string RedisObject::l_range(int start, int end) const {
     if (this->type_ != Type::LIST) return "Redis object type error";
-    const auto& list = std::get<std::vector<RedisString>>(this->value);
+    const auto& list = std::get<std::vector<std::string>>(this->value);
     const int size = list.size();
 
     // minus index
@@ -217,21 +239,268 @@ std::string RedisObject::l_range(int start, int end) const {
     // calculate border
     start = std::max(0, start);
     end = std::min(size - 1, end);
-    if (start > end) return "(empty list)";
+    if (start > end) return "(empty array)";
 
     std::string result;
     for (size_t i = start; i <= end; ++i) {
-        std::string number = "(" + std::to_string(i - start + 1) + ") ";
-        result += number + list[i].std_string();
+        result += std::to_string(i - start + 1) + ") " + list[i];
         if (i < end) result += "\n";
     }
-    return result.empty() ? "(empty list)" : result;
+    return result.empty() ? "(empty array)" : result;
 }
 
 std::string RedisObject::l_len() const {
     if (this->type_ != Type::LIST) return "Redis object type error";
-    const auto& list = std::get<std::vector<RedisString>>(this->value);
+    const auto& list = std::get<std::vector<std::string>>(this->value);
     return std::to_string(list.size());
 }
 
+// Hash
+std::string RedisObject::h_set(const std::string& field, const std::string& value) {
+    if (this->type_ != Type::HASH) return "Redis object type error";
+    auto& map = std::get<std::unordered_map<std::string, RedisString>>(this->value);
+    map[field] = RedisString(value);
+    return "OK";
+}
 
+std::string RedisObject::h_get(const std::string& field) {
+    if (this->type_ != Type::HASH) return "Redis object type error";
+    if (auto& map = std::get<std::unordered_map<std::string, RedisString>>(this->value); map.find(field) != map.end()) {
+        return map[field].std_string();
+    }
+    return "(nil)";
+}
+
+std::string RedisObject::h_get_all() const {
+    if (this->type_ != Type::HASH) return "Redis object type error";
+    const auto& map = std::get<std::unordered_map<std::string, RedisString>>(this->value);
+    std::string result;
+    int count = 0;
+    for (const auto&[fst, snd] : map) {
+        if (count > 0) {
+            result += "\n";
+        }
+        count++;
+        result += std::to_string(count) + ") " + fst + ": " + snd.std_string();
+    }
+    return result;
+}
+
+std::string RedisObject::h_keys() const {
+    if (this->type_ != Type::HASH) return "Redis object type error";
+    const auto& map = std::get<std::unordered_map<std::string, RedisString>>(this->value);
+    std::string result;
+    int count = 0;
+    for (const auto&[fst, snd] : map) {
+        if (count > 0) {
+            result += "\n";
+        }
+        count++;
+        result += std::to_string(count) + ") " + fst;
+    }
+    return result;
+}
+
+std::string RedisObject::h_vals() const {
+    if (this->type_ != Type::HASH) return "Redis object type error";
+    const auto& map = std::get<std::unordered_map<std::string, RedisString>>(this->value);
+    std::string result;
+    int count = 0;
+    for (const auto&[fst, snd] : map) {
+        if (count > 0) {
+            result += "\n";
+        }
+        count++;
+        result += std::to_string(count) + ") " + snd.std_string();
+    }
+    return result;
+}
+
+std::string RedisObject::h_set_n_x(const std::string& field, const std::string& value) {
+    if (this->type_ != Type::HASH) return "Redis object type error";
+    if (auto& map = std::get<std::unordered_map<std::string, RedisString>>(this->value); map.find(field) == map.end()) {
+        map[field] = RedisString(value);
+        return "OK";
+    }
+    return "(nil)";
+}
+
+/*std::string RedisObject::h_incr_by(const std::string& field, int increment) {
+    ;
+}
+
+std::string RedisObject::h_incr_by_float(const std::string& field, double increment) {
+    ;
+}*/
+
+// Set
+std::string RedisObject::s_add(const std::string& member) {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    set.emplace(member);
+    return "OK";
+}
+
+std::string RedisObject::s_rem(const std::string& member) {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    if (const auto it = set.find(member); it != set.end()) {
+        set.erase(it);
+        return "OK";
+    }
+    return "(nil)";
+}
+
+std::string RedisObject::s_card() const {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    return std::to_string(set.size());
+}
+
+std::string RedisObject::s_is_member(const std::string& member) const {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    return std::to_string(set.find(member) != set.end());
+}
+
+std::string RedisObject::s_members() const {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    std::string result;
+    int count = 0;
+    for (const auto& r : set) {
+        if (count > 0) {
+            result += "\n";
+        }
+        count++;
+        result += std::to_string(count) + ") " + r;
+    }
+    return result;
+}
+
+std::string RedisObject::s_inter(const RedisObject& other) const {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    if (other.type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    auto& set2 = std::get<std::unordered_set<std::string>>(other.value);
+    std::string result;
+    int count = 0;
+    for (const auto& r : set) {
+        if (set2.find(r) != set2.end()) {
+            if (count > 0) {
+                result += "\n";
+            }
+            count++;
+            result += std::to_string(count) + ") " + r;
+        }
+    }
+    return result;
+}
+
+std::string RedisObject::s_diff(const RedisObject& other) const {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    if (other.type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    auto& set2 = std::get<std::unordered_set<std::string>>(other.value);
+    std::string result;
+    int count = 0;
+    for (const auto& r : set) {
+        if (set2.find(r) == set2.end()) {
+            if (count > 0) {
+                result += "\n";
+            }
+            count++;
+            result += std::to_string(count) + ") " + r;
+        }
+    }
+    return result;
+}
+
+std::string RedisObject::s_union(const RedisObject& other) const {
+    if (this->type_ != Type::SET) return "Redis object type error";
+    if (other.type_ != Type::SET) return "Redis object type error";
+    auto& set = std::get<std::unordered_set<std::string>>(this->value);
+    auto& set2 = std::get<std::unordered_set<std::string>>(other.value);
+    std::string result;
+    int count = 0;
+    for (const auto& r : set) {
+        if (set2.find(r) == set2.end()) {
+            if (count > 0) {
+                result += "\n";
+            }
+            count++;
+            result += std::to_string(count) + ") " + r;
+        }
+    }
+    for (const auto& r : set2) {
+        if (count > 0) {
+            result += "\n";
+        }
+        count++;
+        result += std::to_string(count) + ") " + r;
+    }
+    return result;
+}
+
+// ZSet
+std::string RedisObject::z_add(const double score, const std::string& member) {
+    if (this->type_ != Type::ZSET) return "Redis object type error";
+    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
+    if (const auto it = scoreMap.find(member); it != scoreMap.end()) {
+        sortedSet.erase(ZSetRecord{member, it->second});
+    }
+    if (const int temp = static_cast<int>(score); temp == score) {
+        scoreMap[member] = temp;
+        sortedSet.insert(ZSetRecord{member, temp});
+    } else {
+        scoreMap[member] = score;
+        sortedSet.insert(ZSetRecord{member, score});
+    }
+    return "OK";
+}
+
+/*
+std::string RedisObject::z_rem(const std::string& member) {
+    ;
+}
+
+std::string RedisObject::z_score(const std::string& member) const {
+    ;
+}
+
+std::string RedisObject::z_rank(const std::string& member, bool with_score) const {
+    ;
+}
+
+std::string RedisObject::z_card() const {
+    ;
+}
+
+std::string RedisObject::z_count(double min, double max) const {
+    ;
+}
+
+std::string RedisObject::z_incr_by(double increment, std::string& member) {
+    ;
+}
+
+std::string RedisObject::z_range(int idx1, int idx2, bool with_scores) const {
+    ;
+}
+
+std::string RedisObject::z_range_by_score(double min, double max, bool minus_inf, bool plus_inf, bool left_not_eq, bool right_not_eq, bool with_scores) const {
+    ;
+}
+
+std::string RedisObject::z_inter(const std::string& key2, bool with_scores) const {
+    ;
+}
+
+std::string RedisObject::z_diff(const std::string& key2, bool with_scores) const {
+    ;
+}
+
+std::string RedisObject::z_union(const std::string& key2, bool with_scores) const {
+    ;
+}
+*/

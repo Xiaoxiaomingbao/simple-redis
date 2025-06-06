@@ -4,13 +4,13 @@
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
-#include <map>
+#include <set>
 
 class RedisString {
 public:
 
     enum class Encoding {
-        STD_STRING, INT, DOUBLE, NONE
+        ONLY_STRING, STRING_INT, STRING_DOUBLE, NONE
     };
 
     explicit RedisString(const std::string& str);
@@ -19,57 +19,45 @@ public:
 
     Encoding encoding() const;
 
-    std::string get_string() const;
-
-    int get_int() const;
-
-    double get_double() const;
-
     std::string std_string() const;
 
-    void update_content(const std::string& new_value); // Type not changed
+    void update_num(int delta); // used only when encoding_ is STRING_INT
 
-    void update_content(int new_value); // Type not changed
-
-    void update_content(double new_value); // Type not changed
-
-    void convert_num_type(); // Type converted from int to double
+    void update_num(double delta);
 
 private:
-    std::variant<std::string, int, double, std::nullptr_t> str;
+
+    void parse_str(); // parse str to get num
+
+    void update_str(); // after num is calculated, set str
+
+    std::variant<int, double, std::nullptr_t> num;
+    std::string str;
     Encoding encoding_;
 };
 
-struct RedisStringHasher {
-    std::size_t operator()(const RedisString& rs) const {
-        switch (rs.encoding()) {
-            case RedisString::Encoding::INT:
-                return std::hash<int>()(rs.get_int());
-            case RedisString::Encoding::DOUBLE:
-                return std::hash<double>()(rs.get_double());
-            case RedisString::Encoding::STD_STRING:
-                return std::hash<std::string>()(rs.get_string());
-            default:
-                return 0;
-        }
+struct ZSetRecord {
+    std::string member;
+    std::variant<int, double> score;
+};
+
+struct ZSetRecordCmp {
+    bool operator()(const ZSetRecord& a, const ZSetRecord& b) const {
+        const auto getDouble = [](const std::variant<int, double>& v) -> double {
+            return std::holds_alternative<int>(v) ? std::get<int>(v) : std::get<double>(v);
+        };
+        double sa = getDouble(a.score);
+        double sb = getDouble(b.score);
+        // order by score
+        if (sa != sb) return sa < sb;
+        // then order by string
+        return a.member < b.member;
     }
 };
 
-struct RedisStringEqual {
-    bool operator()(const RedisString& a, const RedisString& b) const {
-        if (a.encoding() == b.encoding()) {
-            switch (a.encoding()) {
-                case RedisString::Encoding::INT:
-                    return a.get_int() == b.get_int();
-                case RedisString::Encoding::DOUBLE:
-                    return a.get_double() == b.get_double();
-                case RedisString::Encoding::STD_STRING:
-                    return a.get_string() == b.get_string();
-                default: ;
-            }
-        }
-        return false;
-    }
+struct ZSet {
+    std::set<ZSetRecord, ZSetRecordCmp> sortedSet;
+    std::unordered_map<std::string, std::variant<int, double>> scoreMap;
 };
 
 class RedisObject {
@@ -80,7 +68,7 @@ public:
     };
 
     enum class Encoding {
-        REDIS_STRING, STD_VECTOR, STD_UNORDERED_SET, STD_UNORDERED_MAP, STD_MAP
+        REDIS_STRING, STD_VECTOR, STD_UNORDERED_SET, STD_UNORDERED_MAP, STD_SET_STD_UNORDERED_MAP
     };
 
     explicit RedisObject(Type type);
@@ -93,21 +81,55 @@ public:
     std::string get() const;
     std::string set(const std::string& value);
     std::string incr();
-    std::string incr_by(int stride);
-    std::string incr_by_float(double stride);
+    std::string incr_by(int increment);
+    std::string incr_by_float(double increment);
 
     // List
     std::string l_push(const std::string& value);
     std::string l_pop();
     std::string r_push(const std::string& value);
     std::string r_pop();
-    std::string l_range(int start, int end) const;
+    std::string l_range(int start, int end) const; // start & end included, same below
     std::string l_len() const;
 
+    // Hash
+    std::string h_set(const std::string& field, const std::string& value);
+    std::string h_get(const std::string& field);
+    std::string h_get_all() const;
+    std::string h_keys() const;
+    std::string h_vals() const;
+    std::string h_set_n_x(const std::string& field, const std::string& value);
+    std::string h_incr_by(const std::string& field, int increment);
+    std::string h_incr_by_float(const std::string& field, double increment);
+
+    // Set
+    std::string s_add(const std::string& member);
+    std::string s_rem(const std::string& member);
+    std::string s_card() const;
+    std::string s_is_member(const std::string& member) const;
+    std::string s_members() const;
+    std::string s_inter(const RedisObject& other) const;
+    std::string s_diff(const RedisObject& other) const;
+    std::string s_union(const RedisObject& other) const;
+
+    // ZSet
+    std::string z_add(double score, const std::string& member);
+    std::string z_rem(const std::string& member);
+    std::string z_score(const std::string& member) const;
+    std::string z_rank(const std::string& member, bool with_score) const; // indexed from 0
+    std::string z_card() const;
+    std::string z_count(double min, double max) const;
+    std::string z_incr_by(double increment, std::string& member);
+    std::string z_range(int idx1, int idx2, bool with_scores) const;
+    std::string z_range_by_score(double min, double max, bool minus_inf, bool plus_inf, bool left_not_eq, bool right_not_eq, bool with_scores) const;
+    std::string z_inter(const std::string& key2, bool with_scores) const;
+    std::string z_diff(const std::string& key2, bool with_scores) const;
+    std::string z_union(const std::string& key2, bool with_scores) const;
+
 private:
-    std::variant<RedisString, std::vector<RedisString>,
-        std::unordered_set<RedisString, RedisStringHasher, RedisStringEqual>,
-        std::unordered_map<std::string, RedisString>, std::map<double, RedisString>> value;
+    std::variant<RedisString, std::vector<std::string>,
+        std::unordered_map<std::string, RedisString>,
+        std::unordered_set<std::string>, ZSet> value;
     Type type_;
     Encoding encoding_;
 };

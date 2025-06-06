@@ -237,13 +237,11 @@ void RedisServer::parse_and_execute(const int client_fd, const std::string& comm
             if (tokens.size() == 3) {
                 if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
                     try {
-                        int stride = std::stoi(tokens[2]);
-                        auto res = it->second.incr_by(stride);
+                        int increment = std::stoi(tokens[2]);
+                        auto res = it->second.incr_by(increment);
                         send_response(client_fd, res);
-                    } catch (const std::invalid_argument &e) {
-                        send_response(client_fd, "Stride should be an integer");
-                    } catch (const std::out_of_range &e) {
-                        send_response(client_fd, "Stride should be an integer");
+                    } catch (...) {
+                        send_response(client_fd, "Increment should be an integer");
                     }
                 } else {
                     send_response(client_fd, "(nil)");
@@ -255,13 +253,11 @@ void RedisServer::parse_and_execute(const int client_fd, const std::string& comm
             if (tokens.size() == 3) {
                 if (const auto it = kv_store.find(tokens[1]); it != kv_store.end()) {
                     try {
-                        double stride = std::stod(tokens[2]);
-                        auto res = it->second.incr_by_float(stride);
+                        double increment = std::stod(tokens[2]);
+                        auto res = it->second.incr_by_float(increment);
                         send_response(client_fd, res);
-                    } catch (const std::invalid_argument &e) {
-                        send_response(client_fd, "Stride should be a float number");
-                    } catch (const std::out_of_range &e) {
-                        send_response(client_fd, "Stride should be a float number");
+                    } catch (...) {
+                        send_response(client_fd, "Increment should be a float number");
                     }
                 } else {
                     send_response(client_fd, "(nil)");
