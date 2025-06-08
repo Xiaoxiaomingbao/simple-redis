@@ -50,7 +50,7 @@ struct ZSetRecordCmp {
         double sb = getDouble(b.score);
         // order by score
         if (sa != sb) return sa < sb;
-        // then order by string
+        // then order by member
         return a.member < b.member;
     }
 };
@@ -116,15 +116,14 @@ public:
     std::string z_add(double score, const std::string& member);
     std::string z_rem(const std::string& member);
     std::string z_score(const std::string& member) const;
-    std::string z_rank(const std::string& member, bool with_score) const; // indexed from 0
+    std::string z_rank(const std::string& member, bool with_score) const; // 0-based index
     std::string z_card() const;
     std::string z_count(double min, double max) const;
     std::string z_incr_by(double increment, std::string& member);
     std::string z_range(int idx1, int idx2, bool with_scores) const;
     std::string z_range_by_score(double min, double max, bool minus_inf, bool plus_inf, bool left_not_eq, bool right_not_eq, bool with_scores) const;
-    std::string z_inter(const std::string& key2, bool with_scores) const;
-    std::string z_diff(const std::string& key2, bool with_scores) const;
-    std::string z_union(const std::string& key2, bool with_scores) const;
+    std::string z_inter(const RedisObject& other) const; // add the score of common member
+    std::string z_union(const RedisObject& other) const; // add the score of common member
 
 private:
     std::variant<RedisString, std::vector<std::string>,

@@ -180,8 +180,177 @@ void RedisServer::parse_and_execute(const int client_fd, const std::string& comm
         }
     } else if (command_type[0] == 'H') {
         // Hash
+        auto command_type_len = command_type + std::to_string(tokens.size());
+        std::unordered_set<std::string> commands({"HSET4", "HGET3", "HGETALL2", "HKEYS2",
+            "HVALS2", "HSETNX4", "HINCRBY4", "HINCRBYFLOAT4"});
+        if (const auto it = commands.find(command_type_len); it == commands.end()) {
+            send_response(client_fd, "Unknown command or incorrect argument number");
+            return;
+        }
+        const auto it = kv_store.find(tokens[1]);
+        if (it == kv_store.end() && !(command_type == "HSET" || command_type == "HSETNX")) {
+            send_response(client_fd, "(nil)");
+            return;
+        }
+        if (tokens.size() == 2) {
+            if (command_type == "HGETALL") {
+                auto res = it->second.h_get_all();
+                send_response(client_fd, res);
+            } else if (command_type == "HKEYS") {
+                auto res = it->second.h_keys();
+                send_response(client_fd, res);
+            } else {
+                auto res = it->second.h_vals();
+                send_response(client_fd, res);
+            }
+        } else if (tokens.size() == 3) {
+            auto res = it->second.h_get(tokens[2]);
+            send_response(client_fd, res);
+        } else {
+            if (command_type == "HSET") {
+                if (it == kv_store.end()) {
+                    auto ro = RedisObject(RedisObject::Type::HASH);
+                    auto res = ro.h_set_n_x(tokens[2], tokens[3]);
+                    kv_store.emplace(tokens[1], std::move(ro));
+                    send_response(client_fd, res);
+                } else {
+                    auto res = it->second.h_set_n_x(tokens[2], tokens[3]);
+                    send_response(client_fd, res);
+                }
+            } else if (command_type == "HSETNX") {
+                if (it == kv_store.end()) {
+                    auto ro = RedisObject(RedisObject::Type::HASH);
+                    auto res = ro.h_set_n_x(tokens[2], tokens[3]);
+                    kv_store.emplace(tokens[1], std::move(ro));
+                    send_response(client_fd, res);
+                } else {
+                    auto res = it->second.h_set_n_x(tokens[2], tokens[3]);
+                    send_response(client_fd, res);
+                }
+            } else if (command_type == "HINCRBY") {
+                int increment;
+                try {
+                    increment = std::stoi(tokens[3]);
+                } catch (...) {
+                    send_response(client_fd, "Increment should be an integer");
+                    return;
+                }
+                auto res = it->second.h_incr_by(tokens[2], increment);
+                send_response(client_fd, res);
+            } else {
+                double increment;
+                try {
+                    increment = std::stod(tokens[3]);
+                } catch (...) {
+                    send_response(client_fd, "Increment should be a float number");
+                    return;
+                }
+                auto res = it->second.h_incr_by_float(tokens[2], increment);
+                send_response(client_fd, res);
+            }
+        }
     } else if (command_type[0] == 'S' && command_type[1] != 'E') {
         // Set
+        auto command_type_len = command_type + std::to_string(tokens.size());
+        std::unordered_set<std::string> commands({"SADD3", "SREM3", "SCARD2", "SISMEMBER3",
+            "SMEMBERS2", "SINTER3", "SUNION3", "SDIFF3"});
+        if (const auto it = commands.find(command_type_len); it == commands.end()) {
+            send_response(client_fd, "Unknown command or incorrect argument number");
+            return;
+        }
+        const auto it = kv_store.find(tokens[1]);
+        if (it == kv_store.end() && (command_type == "SREM" || command_type == "SCARD" ||
+            command_type == "SISMEMBER" || command_type == "SMEMBERS")) {
+            send_response(client_fd, "(nil)");
+            return;
+        }
+        if (tokens.size() == 2) {
+            if (command_type == "SCARD") {
+                auto res = it->second.s_card();
+                send_response(client_fd, res);
+            } else {
+                auto res = it->second.s_members();
+                send_response(client_fd, res);
+            }
+        } else {
+            if (command_type == "SADD") {
+                if (it == kv_store.end()) {
+                    auto ro = RedisObject(RedisObject::Type::SET);
+                    auto res = ro.s_add(tokens[2]);
+                    kv_store.emplace(tokens[1], std::move(ro));
+                    send_response(client_fd, res);
+                } else {
+                    auto res = it->second.s_add(tokens[2]);
+                    send_response(client_fd, res);
+                }
+            } else if (command_type == "SREM") {
+                auto res = it->second.s_rem(tokens[2]);
+                send_response(client_fd, res);
+            } else if (command_type == "SISMEMBER") {
+                auto res = it->second.s_is_member(tokens[2]);
+                send_response(client_fd, res);
+            } else if (command_type == "SINTER") {
+                std::string res;
+                if (it == kv_store.end()) {
+                    // just use this as an empty set, do not save it
+                    auto ro1 = RedisObject(RedisObject::Type::SET);
+                    if (const auto it2 = kv_store.find(tokens[2]); it2 == kv_store.end()) {
+                        // just use this as an empty set, do not save it
+                        auto ro2 = RedisObject(RedisObject::Type::SET);
+                        res = ro1.s_inter(ro2);
+                    } else {
+                        res = ro1.s_inter(it2->second);
+                    }
+                } else {
+                    if (const auto it2 = kv_store.find(tokens[2]); it2 == kv_store.end()) {
+                        // just use this as an empty set, do not save it
+                        auto ro2 = RedisObject(RedisObject::Type::SET);
+                        res =  it->second.s_inter(ro2);
+                    } else {
+                        res = it->second.s_inter(it2->second);
+                    }
+                }
+                send_response(client_fd, res);
+            } else if (command_type == "SUNION") {
+                std::string res;
+                if (it == kv_store.end()) {
+                    auto ro1 = RedisObject(RedisObject::Type::SET);
+                    if (const auto it2 = kv_store.find(tokens[2]); it2 == kv_store.end()) {
+                        auto ro2 = RedisObject(RedisObject::Type::SET);
+                        res = ro1.s_union(ro2);
+                    } else {
+                        res = ro1.s_union(it2->second);
+                    }
+                } else {
+                    if (const auto it2 = kv_store.find(tokens[2]); it2 == kv_store.end()) {
+                        auto ro2 = RedisObject(RedisObject::Type::SET);
+                        res =  it->second.s_union(ro2);
+                    } else {
+                        res = it->second.s_union(it2->second);
+                    }
+                }
+                send_response(client_fd, res);
+            } else {
+                std::string res;
+                if (it == kv_store.end()) {
+                    auto ro1 = RedisObject(RedisObject::Type::SET);
+                    if (const auto it2 = kv_store.find(tokens[2]); it2 == kv_store.end()) {
+                        auto ro2 = RedisObject(RedisObject::Type::SET);
+                        res = ro1.s_diff(ro2);
+                    } else {
+                        res = ro1.s_diff(it2->second);
+                    }
+                } else {
+                    if (const auto it2 = kv_store.find(tokens[2]); it2 == kv_store.end()) {
+                        auto ro2 = RedisObject(RedisObject::Type::SET);
+                        res =  it->second.s_diff(ro2);
+                    } else {
+                        res = it->second.s_diff(it2->second);
+                    }
+                }
+                send_response(client_fd, res);
+            }
+        }
     } else if (command_type[0] == 'Z') {
         // ZSet
     } else {
