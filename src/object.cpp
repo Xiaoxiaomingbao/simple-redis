@@ -141,7 +141,7 @@ RedisObject::RedisObject(const Type type) {
             break;
         case Type::ZSET:
             this->type_ = Type::ZSET;
-            this->encoding_ = Encoding::STD_SET_STD_UNORDERED_MAP;
+            this->encoding_ = Encoding::SKIPLIST_STD_UNORDERED_MAP;
             this->value = ZSet{};
             break;
         default: ;
@@ -483,112 +483,125 @@ std::string RedisObject::s_union(const RedisObject& other) const {
 // ZSet
 std::string RedisObject::z_add(const double score, const std::string& member) {
     if (this->type_ != Type::ZSET) return "Redis object type error";
-    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
-    if (const auto it = scoreMap.find(member); it != scoreMap.end()) {
-        sortedSet.erase(ZSetRecord{member, it->second});
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    if (const auto it = map.find(member); it != map.end()) {
+        skipList.erase(member, it->second);
     }
-    if (const int temp = static_cast<int>(score); temp == score) {
-        scoreMap[member] = temp;
-        sortedSet.insert(ZSetRecord{member, temp});
-    } else {
-        scoreMap[member] = score;
-        sortedSet.insert(ZSetRecord{member, score});
-    }
-    return "OK";
+    map[member] = score;
+    skipList.insert(member, score);
+    return "Ok";
 }
 
 std::string RedisObject::z_rem(const std::string& member) {
     if (this->type_ != Type::ZSET) return "Redis object type error";
-    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
-    const auto it = scoreMap.find(member);
-    if (it == scoreMap.end()) return "(nil)";
-    sortedSet.erase(ZSetRecord{member, it->second});
-    scoreMap.erase(it);
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    const auto it = map.find(member);
+    if (it == map.end()) return "(nil)";
+    skipList.erase(member, it->second);
+    map.erase(it);
     return "OK";
 }
 
-const auto variant2string = [](const std::variant<int, double>& v) -> std::string {
-    return std::to_string(std::holds_alternative<int>(v) ? std::get<int>(v) : std::get<double>(v));
+const auto double2string = [](const double& d) -> std::string {
+    if (const int temp = static_cast<int>(d); temp == d) {
+        return std::to_string(temp);
+    }
+    return std::to_string(d);
 };
 
 std::string RedisObject::z_score(const std::string& member) const {
     if (this->type_ != Type::ZSET) return "Redis object type error";
-    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
-    const auto it = scoreMap.find(member);
-    if (it == scoreMap.end()) return "(nil)";
-    return variant2string(it->second);
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    const auto it = map.find(member);
+    if (it == map.end()) return "(nil)";
+    return double2string(it->second);
 }
 
 std::string RedisObject::z_rank(const std::string& member, const bool with_score) const {
     if (this->type_ != Type::ZSET) return "Redis object type error";
-    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
-    const auto it = scoreMap.find(member);
-    if (it == scoreMap.end()) return "(nil)";
-    ZSetRecord rec{member, it->second};
-    size_t rank = 0;
-    // linear search to get rank
-    for (const auto&[m, s] : sortedSet) {
-        if (m == member) {
-            if (with_score) {
-                return std::to_string(rank) + " " + variant2string(s);
-            }
-            return std::to_string(rank);
-        }
-        ++rank;
-    }
-    return "Unexpected error";
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    const auto it = map.find(member);
+    if (it == map.end()) return "(nil)";
+    return std::to_string(skipList.rank(member, it->second));
 }
 
 std::string RedisObject::z_card() const {
     if (this->type_ != Type::ZSET) return "Redis object type error";
-    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
-    return std::to_string(scoreMap.size());
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    return std::to_string(map.size());
 }
 
-/*std::string RedisObject::z_count(double min, double max) const {
-    ;
+std::string RedisObject::z_count(const double min, const double max) const {
+    if (this->type_ != Type::ZSET) return "Redis object type error";
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    return std::to_string(skipList.rangeByScore(min, false, max, false).size());
 }
 
-std::string RedisObject::z_incr_by(double increment, std::string& member) {
-    ;
+std::string RedisObject::z_incr_by(const double increment, const std::string& member) {
+    if (this->type_ != Type::ZSET) return "Redis object type error";
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    double newScore;
+    if (const auto it = map.find(member); it != map.end()) {
+        newScore = it->second + increment;
+        skipList.erase(member, it->second);
+    } else {
+        return "(nil)";
+    }
+    map[member] = newScore;
+    skipList.insert(member, newScore);
+    return double2string(newScore);
 }
 
-std::string RedisObject::z_range(int idx1, int idx2, bool with_scores) const {
-    ;
-}
-
-std::string RedisObject::z_range_by_score(double min, double max, bool minus_inf, bool plus_inf, bool left_not_eq, bool right_not_eq, bool with_scores) const {
-    ;
-}*/
-
-const auto add = [](const std::variant<int, double>& v1, const std::variant<int, double>& v2) -> std::string {
-    if (std::holds_alternative<int>(v1)) {
-        if (std::holds_alternative<int>(v2)) {
-            return std::to_string(std::get<int>(v1) + std::get<int>(v2));
+std::string RedisObject::z_range(const int idx1, const int idx2, const bool with_scores) const {
+    if (this->type_ != Type::ZSET) return "Redis object type error";
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    std::string result;
+    int count = 0;
+    for (const auto& item : skipList.range(idx1, idx2)) {
+        if (count > 0) {
+            result += "\n";
         }
+        count++;
+        result += std::to_string(count) + ") " + item + (with_scores ? double2string(map.at(item)) : "");
     }
-    const double sum = (std::holds_alternative<int>(v1) ? std::get<int>(v1) : std::get<double>(v1)) +
-        (std::holds_alternative<int>(v2) ? std::get<int>(v2) : std::get<double>(v2));
-    if (const int temp = static_cast<int>(sum); temp == sum) {
-        return std::to_string(temp);
+    if (count == 0) {
+        return "(empty array)";
     }
-    return std::to_string(sum);
-};
+    return result;
+}
+
+std::string RedisObject::z_range_by_score(const double min, const bool minExclusive, const double max, const bool maxExclusive, const bool with_scores) const {
+    if (this->type_ != Type::ZSET) return "Redis object type error";
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    std::string result;
+    int count = 0;
+    for (const auto& item : skipList.rangeByScore(min, minExclusive, max, maxExclusive)) {
+        if (count > 0) {
+            result += "\n";
+        }
+        count++;
+        result += std::to_string(count) + ") " + item + (with_scores ? double2string(map.at(item)) : "");
+    }
+    if (count == 0) {
+        return "(empty array)";
+    }
+    return result;
+}
 
 std::string RedisObject::z_inter(const RedisObject& other) const {
     if (this->type_ != Type::ZSET) return "Redis object type error";
     if (other.type_ != Type::ZSET) return "Redis object type error";
-    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
-    auto&[sortedSet2, scoreMap2] = std::get<ZSet>(other.value);
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    auto&[skipList2, map2] = std::get<ZSet>(other.value);
     std::string result;
     int count = 0;
-    for (const auto&[k, v] : scoreMap) {
-        if (auto it = scoreMap2.find(k); it != scoreMap2.end()) {
+    for (const auto&[k, v] : map) {
+        if (auto it = map2.find(k); it != map2.end()) {
             if (count > 0) {
                 result += "\n";
             }
             count++;
-            result += std::to_string(count) + ") " + k + " " + add(v, it->second);
+            result += std::to_string(count) + ") " + k + " " + double2string(v + it->second);
         }
     }
     if (count == 0) {
@@ -600,19 +613,19 @@ std::string RedisObject::z_inter(const RedisObject& other) const {
 std::string RedisObject::z_union(const RedisObject& other) const {
     if (this->type_ != Type::ZSET) return "Redis object type error";
     if (other.type_ != Type::ZSET) return "Redis object type error";
-    auto&[sortedSet, scoreMap] = std::get<ZSet>(this->value);
-    auto&[sortedSet2, scoreMap2] = std::get<ZSet>(other.value);
+    auto&[skipList, map] = std::get<ZSet>(this->value);
+    auto&[skipList2, map2] = std::get<ZSet>(other.value);
     std::string result;
     int count = 0;
-    for (const auto&[k, v] : scoreMap) {
+    for (const auto&[k, v] : map) {
         if (count > 0) {
             result += "\n";
         }
         count++;
-        if (auto it = scoreMap2.find(k); it != scoreMap2.end()) {
-            result += std::to_string(count) + ") " + k + " " + add(v, it->second);
+        if (auto it = map2.find(k); it != map2.end()) {
+            result += std::to_string(count) + ") " + k + " " + double2string(v + it->second);
         } else {
-            result += std::to_string(count) + ") " + k + " " + variant2string(v);
+            result += std::to_string(count) + ") " + k + " " + double2string(v);
         }
     }
     if (count == 0) {

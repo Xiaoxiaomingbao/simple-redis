@@ -1,10 +1,12 @@
 #pragma once
+
+#include "SkipList.cpp"
+
 #include <string>
 #include <variant>
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
-#include <set>
 
 class RedisString {
 public:
@@ -36,28 +38,9 @@ private:
     Encoding encoding_;
 };
 
-struct ZSetRecord {
-    std::string member;
-    std::variant<int, double> score;
-};
-
-struct ZSetRecordCmp {
-    bool operator()(const ZSetRecord& a, const ZSetRecord& b) const {
-        const auto getDouble = [](const std::variant<int, double>& v) -> double {
-            return std::holds_alternative<int>(v) ? std::get<int>(v) : std::get<double>(v);
-        };
-        double sa = getDouble(a.score);
-        double sb = getDouble(b.score);
-        // order by score
-        if (sa != sb) return sa < sb;
-        // then order by member
-        return a.member < b.member;
-    }
-};
-
 struct ZSet {
-    std::set<ZSetRecord, ZSetRecordCmp> sortedSet;
-    std::unordered_map<std::string, std::variant<int, double>> scoreMap;
+    SkipList skipList;
+    std::unordered_map<std::string, double> map;
 };
 
 class RedisObject {
@@ -68,7 +51,7 @@ public:
     };
 
     enum class Encoding {
-        REDIS_STRING, STD_VECTOR, STD_UNORDERED_SET, STD_UNORDERED_MAP, STD_SET_STD_UNORDERED_MAP
+        REDIS_STRING, STD_VECTOR, STD_UNORDERED_SET, STD_UNORDERED_MAP, SKIPLIST_STD_UNORDERED_MAP
     };
 
     explicit RedisObject(Type type);
@@ -119,11 +102,11 @@ public:
     std::string z_rank(const std::string& member, bool with_score) const; // 0-based index
     std::string z_card() const;
     std::string z_count(double min, double max) const;
-    std::string z_incr_by(double increment, std::string& member);
+    std::string z_incr_by(double increment, const std::string& member);
     std::string z_range(int idx1, int idx2, bool with_scores) const;
-    std::string z_range_by_score(double min, double max, bool minus_inf, bool plus_inf, bool left_not_eq, bool right_not_eq, bool with_scores) const;
-    std::string z_inter(const RedisObject& other) const; // add the score of common member
-    std::string z_union(const RedisObject& other) const; // add the score of common member
+    std::string z_range_by_score(double min, bool minExclusive, double max, bool maxExclusive, bool with_scores) const;
+    std::string z_inter(const RedisObject& other) const; // add the score of common members
+    std::string z_union(const RedisObject& other) const; // add the score of common members
 
 private:
     std::variant<RedisString, std::vector<std::string>,
